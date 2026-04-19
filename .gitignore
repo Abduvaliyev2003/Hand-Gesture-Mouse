@@ -1,0 +1,15 @@
+# Python / Environment
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Application Specific
+*.png
+screenshot_*.png
+hand_landmarker.task
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
