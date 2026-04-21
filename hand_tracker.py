@@ -21,7 +21,7 @@ class HandTracker:
         options = vision.HandLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.VIDEO,
-            num_hands=max_hands,
+            num_hands=2, # Set to 2 for dual-hand support
             min_hand_detection_confidence=float(detection_con),
             min_hand_presence_confidence=float(track_con),
             min_tracking_confidence=float(track_con)
@@ -44,7 +44,7 @@ class HandTracker:
         self.results = self.detector.detect_for_video(mp_image, current_timestamp_ms)
         
         if draw and self.results.hand_landmarks:
-            for hand_landmarks in self.results.hand_landmarks:
+            for i, hand_landmarks in enumerate(self.results.hand_landmarks):
                 h, w, _ = img.shape
                 
                 # Draw connections
@@ -55,25 +55,40 @@ class HandTracker:
                     x1, y1 = int(p1.x * w), int(p1.y * h)
                     x2, y2 = int(p2.x * w), int(p2.y * h)
                     
-                    cv2.line(img, (x1, y1), (x2, y2), (255, 255, 255), 2)
+                    cv2.line(img, (x1, y1), (x2, y2), (200, 200, 200), 1) # Thinner, grey lines
                     
                 # Draw landmarks
-                for landmark in hand_landmarks:
+                for id, landmark in enumerate(hand_landmarks):
                     x, y = int(landmark.x * w), int(landmark.y * h)
-                    cv2.circle(img, (x, y), 5, (0, 0, 255), cv2.FILLED)
+                    # Tips get a special highlight
+                    if id in [4, 8, 12, 16, 20]:
+                        cv2.circle(img, (x, y), 6, (0, 255, 255), cv2.FILLED)
+                        cv2.circle(img, (x, y), 8, (0, 255, 255), 1)
+                    else:
+                        cv2.circle(img, (x, y), 3, (150, 150, 150), cv2.FILLED)
+                
+                # Draw hand label (Left/Right)
+                handedness = self.results.handedness[i][0].category_name
+                cv2.putText(img, handedness, (int(hand_landmarks[0].x * w), int(hand_landmarks[0].y * h) - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                     
         return img
         
-    def find_position(self, img, hand_no=0):
-        lms_list = []
+    def find_all_hands(self, img):
+        hands_data = []
         if self.results and self.results.hand_landmarks:
-            if hand_no < len(self.results.hand_landmarks):
-                my_hand = self.results.hand_landmarks[hand_no]
-                h, w, _ = img.shape
-                for id, lm in enumerate(my_hand):
+            h, w, _ = img.shape
+            for i, hand_landmarks in enumerate(self.results.hand_landmarks):
+                lms = []
+                for id, lm in enumerate(hand_landmarks):
                     cx, cy = int(lm.x * w), int(lm.y * h)
-                    lms_list.append([id, cx, cy])
-        return lms_list
+                    lms.append([id, cx, cy])
+                
+                # In MediaPipe, handedness is often inverted when the image is flipped
+                # for a mirror effect. We'll return the raw label for now.
+                label = self.results.handedness[i][0].category_name
+                hands_data.append({"label": label, "lms": lms})
+        return hands_data
         
     def get_distance(self, p1, p2, img=None, draw=True, r=15, t=3):
         x1, y1 = p1[1], p1[2]

@@ -19,9 +19,16 @@ This project allows you to control your computer mouse using hand gestures over 
 
 ## Running the Application
 
-Execute the main script:
+### 1. (Linux/Wayland/X11 Only) Authorize Display Access
+If you encounter `Xlib.error.DisplayConnectionError`, run:
 ```bash
-python main.py
+xhost +local:$(whoami)
+```
+
+### 2. Execute the main script
+Use the virtual environment's Python to ensure all dependencies are available:
+```bash
+./venv/bin/python main.py
 ```
 
 A webcam window will appear. Bring your hand into the frame. Note the tracking points:
