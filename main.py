@@ -1,8 +1,14 @@
+import os
+# Suppress GTK/Qt module warnings
+os.environ["NO_AT_BRIDGE"] = "1"
+os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.qpa.*=false"
+os.environ["QT_QPA_PLATFORM"] = "xcb" # Often more stable on Linux/X11
 import cv2
 import pyautogui
 import time
 import sys
 import numpy as np
+import math
 from hand_tracker import HandTracker
 from mouse_controller import MouseController
 
@@ -48,12 +54,31 @@ def draw_hud(img, fps, status="Ready", active_gesture=None, ripples=[]):
 def get_distance_lms(tracker, lms, p1, p2):
     return tracker.get_distance(lms[p1], lms[p2], img=None, draw=False)[0]
 
-def is_finger_extended(tracker, lms, finger_tip):
-    # Very basic check: is the finger tip further from the wrist (0) than the pip joint (tip-2)?
-    # For more accuracy, use a proper extension check.
-    d_tip = get_distance_lms(tracker, lms, 0, finger_tip)
-    d_pip = get_distance_lms(tracker, lms, 0, finger_tip - 2)
-    return d_tip > d_pip
+def get_fingers_state(lms):
+    """
+    Returns a list of 5 booleans representing [Thumb, Index, Middle, Ring, Pinky].
+    True = Extended, False = Folded.
+    """
+    fingers = []
+    
+    # Thumb: Check distance between tip (4) and index mcp (5) vs ip (3) and index mcp (5)
+    # Or more simply: tip.x vs ip.x (depends on hand orientation)
+    # Improved Thumb check: tip (4) further from wrist (0) than knuckle (2)?
+    # Using distances for better reliability
+    d_tip = math.hypot(lms[4][1] - lms[0][1], lms[4][2] - lms[0][2])
+    d_base = math.hypot(lms[2][1] - lms[0][1], lms[2][2] - lms[0][2])
+    fingers.append(d_tip > d_base + 15)
+
+    # Fingers: Index (8), Middle (12), Ring (16), Pinky (20)
+    # Check if tip is above the pip joint (tip-2)
+    tips = [8, 12, 16, 20]
+    for tip in tips:
+        if lms[tip][2] < lms[tip-2][2]:
+            fingers.append(True)
+        else:
+            fingers.append(False)
+            
+    return fingers
 
 def main():
     w_cam, h_cam = 640, 480
@@ -81,15 +106,13 @@ def main():
     pTime = 0
     pinch_start_time = None
     last_shortcut_time = 0
-    SHORTCUT_COOLDOWN = 2.0  # Increased cooldown
-    DRAG_THRESHOLD = 0.35 
+    SHORTCUT_COOLDOWN = 1.0  # Reduced for responsiveness
+    DRAG_THRESHOLD = 0.30 
     CLICK_DISTANCE = 35
     
     ripples = []
-    status_msg = "Initializing System..."
+    status_msg = "Awaiting input"
     active_gesture = None
-    
-    # Initialization Greeting removed
     
     while True:
         success, img = cap.read()
@@ -107,104 +130,97 @@ def main():
         nav_hand = None
         cmd_hand = None
         
-        # Identify Left and Right hands (MediaPipe labels are mirrored in original view)
         for hand in hands_data:
-            if hand['label'] == "Right": # Mirrored physical Right hand
+            if hand['label'] == "Right": # Physical Right
                 nav_hand = hand['lms']
-            else:
+            else: # Physical Left
                 cmd_hand = hand['lms']
 
-        # Navigation Hand Logic (Right)
+        # Navigation Hand (Right) - Precision Control
         if nav_hand:
-            x1, y1 = nav_hand[8][1], nav_hand[8][2]
+            lms = nav_hand
+            fingers = get_fingers_state(lms)
+            x1, y1 = lms[8][1], lms[8][2]
             
-            d_index = get_distance_lms(tracker, nav_hand, 4, 8)
-            
-            is_yt = get_distance_lms(tracker, nav_hand, 4, 8) < 45 and \
-                    get_distance_lms(tracker, nav_hand, 4, 12) < 45 and \
-                    get_distance_lms(tracker, nav_hand, 4, 16) < 45 and \
-                    get_distance_lms(tracker, nav_hand, 4, 20) > 60
-            
-            is_ig = get_distance_lms(tracker, nav_hand, 4, 12) < 45 and \
-                    get_distance_lms(tracker, nav_hand, 4, 16) < 45 and \
-                    get_distance_lms(tracker, nav_hand, 4, 20) < 45 and \
-                    get_distance_lms(tracker, nav_hand, 4, 8) > 60
-            
-            if is_yt:
-                if mouse.open_url('https://www.youtube.com'):
-                    ripples.append(Ripple(x1, y1, (0, 0, 255)))
-                    active_gesture = "Opening YouTube"
-            elif is_ig:
-                if mouse.open_url('https://www.instagram.com'):
-                    ripples.append(Ripple(x1, y1, (255, 0, 255)))
-                    active_gesture = "Opening Instagram"
-            elif all(get_distance_lms(tracker, nav_hand, 4, tip) < 45 for tip in [12, 16, 20]) and d_index < 45:
-                if mouse.toggle_media():
-                    ripples.append(Ripple(x1, y1, (255, 255, 0)))
-                active_gesture = "Media Toggle"
-            elif get_distance_lms(tracker, nav_hand, 8, 12) < CLICK_DISTANCE:
-                active_gesture = "Scrolling"
-                mouse.scroll(y1)
-            elif get_distance_lms(tracker, nav_hand, 12, 16) < CLICK_DISTANCE:
-                active_gesture = "Volume"
-                mouse.change_volume(nav_hand[12][2])
-            elif get_distance_lms(tracker, nav_hand, 16, 20) < CLICK_DISTANCE:
-                active_gesture = "Brightness"
-                mouse.change_brightness(nav_hand[16][2])
-            elif get_distance_lms(tracker, nav_hand, 8, 20) < CLICK_DISTANCE:
-                active_gesture = "Zoom"
-                mouse.zoom(nav_hand[8][2])
-            else:
-                mouse.reset_continuous()
-                if get_distance_lms(tracker, nav_hand, 4, 16) < CLICK_DISTANCE:
-                    active_gesture = "Browser"
-                    mouse.open_app('firefox')
-                elif get_distance_lms(tracker, nav_hand, 4, 20) < CLICK_DISTANCE:
-                    active_gesture = "Screenshot"
-                    if mouse.take_screenshot():
-                        ripples.append(Ripple(x1, y1, (0, 255, 255)))
-                elif get_distance_lms(tracker, nav_hand, 4, 12) < CLICK_DISTANCE:
-                    active_gesture = "Right Click"
-                    if mouse.right_click():
-                        ripples.append(Ripple(x1, y1, (255, 0, 0)))
-                elif d_index < CLICK_DISTANCE:
+            # 1. Cursor Move / Click / Drag (Only Index Up)
+            if fingers[1] and not any(fingers[2:]):
+                d_index = get_distance_lms(tracker, lms, 4, 8)
+                if d_index < CLICK_DISTANCE:
                     if pinch_start_time is None: pinch_start_time = time.time()
                     if time.time() - pinch_start_time > DRAG_THRESHOLD:
                         mouse.drag_start()
                         active_gesture = "Dragging"
                     else: active_gesture = "Pinching..."
-                    mouse.move_mouse(x1, y1)
                 else:
                     if pinch_start_time is not None:
                         if time.time() - pinch_start_time <= DRAG_THRESHOLD:
                             if mouse.left_click(): ripples.append(Ripple(x1, y1, (0, 255, 0)))
                         mouse.drag_stop()
                         pinch_start_time = None
-                    mouse.move_mouse(x1, y1)
+                    active_gesture = "Moving"
+                mouse.move_mouse(x1, y1)
+
+            # 2. Scrolling (Index and Middle Up)
+            elif fingers[1] and fingers[2] and not any(fingers[3:]):
+                active_gesture = "Scrolling"
+                mouse.scroll(y1)
+            
+            # 3. Volume (Middle, Ring, Pinky Up)
+            elif all(fingers[2:]):
+                active_gesture = "Volume"
+                mouse.change_volume(lms[12][2])
+                
+            # 4. Zoom (Index and Pinky Up)
+            elif fingers[1] and fingers[4] and not fingers[2] and not fingers[3]:
+                active_gesture = "Zoom"
+                mouse.zoom(lms[8][2])
+
+            # 5. Right Click (Index, Middle, Ring Up)
+            elif fingers[1] and fingers[2] and fingers[3] and not fingers[4]:
+                active_gesture = "Right Click"
+                if mouse.right_click(): ripples.append(Ripple(x1, y1, (255, 0, 0)))
+
+            # 6. Tab Switching (Thumb and Index Up Only)
+            elif fingers[0] and fingers[1] and not any(fingers[2:]):
+                curr_time = time.time()
+                if curr_time - last_shortcut_time > SHORTCUT_COOLDOWN:
+                    mouse.browser_control('next_tab')
+                    active_gesture = "Next Tab"
+                    last_shortcut_time = curr_time
+            
+            else:
+                mouse.reset_continuous()
+                pinch_start_time = None
         else:
             mouse.reset_continuous()
             pinch_start_time = None
 
-        # Commander Hand Logic (Left)
+        # Commander Hand (Left) - System Shortcuts
         if cmd_hand:
+            lms_c = cmd_hand
+            fingers_c = get_fingers_state(lms_c)
             curr_time = time.time()
+            
             if curr_time - last_shortcut_time > SHORTCUT_COOLDOWN:
-                d_4_8 = get_distance_lms(tracker, cmd_hand, 4, 8)
-                d_4_12 = get_distance_lms(tracker, cmd_hand, 4, 12)
-                d_4_20 = get_distance_lms(tracker, cmd_hand, 4, 20)
-                
-                # Optimized logic: Pinch must be clear (other fingers extended)
-                # Pinch Index + Thumb = Alt+Tab
-                if d_4_8 < CLICK_DISTANCE and is_finger_extended(tracker, cmd_hand, 12):
+                # 1. Alt + Tab (2 fingers)
+                if fingers_c[1] and fingers_c[2] and not any(fingers_c[3:]):
                     mouse.system_shortcut(['alt', 'tab'])
+                    active_gesture = "Alt + Tab"
                     last_shortcut_time = curr_time
-                # Pinch Middle + Thumb = Show Desktop (Super+D)
-                elif d_4_12 < CLICK_DISTANCE and is_finger_extended(tracker, cmd_hand, 8):
-                    mouse.system_shortcut(['super', 'd'])
+                # 2. Show Desktop (3 fingers)
+                elif all(fingers_c[1:4]) and not fingers_c[4]:
+                    mouse.window_control('minimize') # Minimize current or show desktop
+                    active_gesture = "Minimize / Desktop"
                     last_shortcut_time = curr_time
-                # Pinch Pinky + Thumb = Close Window (Alt+F4)
-                elif d_4_20 < CLICK_DISTANCE and is_finger_extended(tracker, cmd_hand, 8):
-                    mouse.system_shortcut(['alt', 'f4'])
+                # 3. Copy (Thumb + Index Pinch)
+                elif get_distance_lms(tracker, lms_c, 4, 8) < CLICK_DISTANCE:
+                    mouse.edit_control('copy')
+                    active_gesture = "Copy"
+                    last_shortcut_time = curr_time
+                # 4. Paste (Thumb + Middle Pinch)
+                elif get_distance_lms(tracker, lms_c, 4, 12) < CLICK_DISTANCE:
+                    mouse.edit_control('paste')
+                    active_gesture = "Paste"
                     last_shortcut_time = curr_time
 
         cTime = time.time()

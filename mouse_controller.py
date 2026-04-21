@@ -30,6 +30,13 @@ class MouseController:
         self.volume_cooldown = 0.1 # Seconds
         self.brightness_cooldown = 0.1 # Seconds
         
+        # Wayland Keycodes (Linux Kernel)
+        self.key_map = {
+            'ctrl': 29, 'alt': 56, 'super': 125, 'shift': 42,
+            'tab': 15, 'c': 46, 'v': 47, 'z': 44, 
+            'up': 103, 'down': 108, 'f4': 62
+        }
+        
         self.prev_y_scroll = None
         self.prev_y_volume = None
         self.prev_y_brightness = None
@@ -142,9 +149,24 @@ class MouseController:
         return False
 
 
+    def _ydotool_key(self, codes):
+        """Execute key sequence using ydotool. codes is a list of [code, state] pairs."""
+        cmd = "ydotool key " + " ".join([f"{c}:{s}" for c, s in codes])
+        os.system(cmd)
+
     def system_shortcut(self, keys):
         # keys is a list like ['alt', 'tab']
-        pyautogui.hotkey(*keys)
+        if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+            sequence = []
+            # Press all
+            for k in keys:
+                if k in self.key_map: sequence.append([self.key_map[k], 1])
+            # Release all (reverse order)
+            for k in reversed(keys):
+                if k in self.key_map: sequence.append([self.key_map[k], 0])
+            self._ydotool_key(sequence)
+        else:
+            pyautogui.hotkey(*keys)
         print(f"Shortcut triggered: {'+'.join(keys)}")
 
     def scroll(self, y):
@@ -155,9 +177,9 @@ class MouseController:
         dy = y - self.prev_y_scroll
         if abs(dy) > 5:  # sensitivity threshold
             if dy > 0:
-                pyautogui.scroll(-80) # Scroll Down
+                pyautogui.scroll(-120) # Scroll Down
             else:
-                pyautogui.scroll(80)  # Scroll Up
+                pyautogui.scroll(120)  # Scroll Up
             self.prev_y_scroll = y
 
     def change_volume(self, y):
@@ -171,10 +193,8 @@ class MouseController:
         if abs(dy) > 10 and (current_time - self.last_volume_time > self.volume_cooldown):
             if dy > 0:
                 os.system("pactl set-sink-volume @DEFAULT_SINK@ -5%")
-                print("Volume Down")
             else:
                 os.system("pactl set-sink-volume @DEFAULT_SINK@ +5%")
-                print("Volume Up")
             self.prev_y_volume = y
             self.last_volume_time = current_time
 
@@ -188,13 +208,50 @@ class MouseController:
         
         if abs(dy) > 10 and (current_time - self.last_brightness_time > self.brightness_cooldown):
             if dy > 0:
-                pyautogui.press('brightnessdown')
-                print("Brightness Down")
+                os.system("brightnessctl set 5%- || xbacklight -dec 5")
             else:
-                pyautogui.press('brightnessup')
-                print("Brightness Up")
+                os.system("brightnessctl set +5% || xbacklight -inc 5")
             self.prev_y_brightness = y
             self.last_brightness_time = current_time
+
+    def window_control(self, action):
+        """Action can be 'maximize', 'minimize', or 'close'"""
+        if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+            if action == 'maximize':
+                self._ydotool_key([[125, 1], [103, 1], [103, 0], [125, 0]]) # Super+Up
+            elif action == 'minimize':
+                self._ydotool_key([[125, 1], [108, 1], [108, 0], [125, 0]]) # Super+Down
+            elif action == 'close':
+                self._ydotool_key([[56, 1], [62, 1], [62, 0], [56, 0]]) # Alt+F4 (62 is F4)
+        else:
+            if action == 'maximize': pyautogui.hotkey('super', 'up')
+            elif action == 'minimize': pyautogui.hotkey('super', 'down')
+            elif action == 'close': pyautogui.hotkey('alt', 'f4')
+
+    def browser_control(self, action):
+        """Action can be 'next_tab', 'prev_tab', or 'back'"""
+        if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+            if action == 'next_tab':
+                self._ydotool_key([[29, 1], [15, 1], [15, 0], [29, 0]]) # Ctrl+Tab
+            elif action == 'prev_tab':
+                self._ydotool_key([[29, 1], [42, 1], [15, 1], [15, 0], [42, 0], [29, 0]]) # Ctrl+Shift+Tab
+        else:
+            if action == 'next_tab': pyautogui.hotkey('ctrl', 'tab')
+            elif action == 'prev_tab': pyautogui.hotkey('ctrl', 'shift', 'tab')
+
+    def edit_control(self, action):
+        """Action can be 'copy', 'paste', or 'undo'"""
+        if os.environ.get('XDG_SESSION_TYPE') == 'wayland':
+            if action == 'copy':
+                self._ydotool_key([[29, 1], [46, 1], [46, 0], [29, 0]]) # Ctrl+C
+            elif action == 'paste':
+                self._ydotool_key([[29, 1], [47, 1], [47, 0], [29, 0]]) # Ctrl+V
+            elif action == 'undo':
+                self._ydotool_key([[29, 1], [44, 1], [44, 0], [29, 0]]) # Ctrl+Z
+        else:
+            if action == 'copy': pyautogui.hotkey('ctrl', 'c')
+            elif action == 'paste': pyautogui.hotkey('ctrl', 'v')
+            elif action == 'undo': pyautogui.hotkey('ctrl', 'z')
 
     def zoom(self, y):
         if self.prev_y_zoom is None:
@@ -202,13 +259,11 @@ class MouseController:
             return
             
         dy = y - self.prev_y_zoom
-        if abs(dy) > 10:
+        if abs(dy) > 15:
             if dy > 0:
                 pyautogui.hotkey('ctrl', '-')
-                print("Zoom Out")
             else:
                 pyautogui.hotkey('ctrl', '+')
-                print("Zoom In")
             self.prev_y_zoom = y
 
     def reset_continuous(self):
