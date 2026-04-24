@@ -57,14 +57,21 @@ VEL_THRESHOLD = 15
 
 
 # ─── Barmoqlar yuqorimi? ─────────────────────────────────────────────────────
-def fingers_up(lms, label="Right"):
+def fingers_up(lms, label="Right", tracker=None):
     """Qaysi barmoqlar ko'tarilgan: [thumb, index, middle, ring, pinky]"""
     fup = []
-    # Bosh barmoq — x koordinataga qaraydi
-    if label == "Right":
-        fup.append(lms[4][1] < lms[3][1])
+    # Bosh barmoq — x koordinataga emas, 17-nuqtaga masofasiga qaraymiz (aniqroq)
+    if tracker:
+        d4_17 = tracker.get_distance(lms[4], lms[17], img=None, draw=False)[0]
+        d3_17 = tracker.get_distance(lms[3], lms[17], img=None, draw=False)[0]
+        # Agar uch qismi (4) bo'g'imdan (3) ko'ra uzoqroq bo'lsa -> yoniq (UP)
+        fup.append(d4_17 > d3_17)
     else:
-        fup.append(lms[4][1] > lms[3][1])
+        if label == "Right":
+            fup.append(lms[4][1] < lms[3][1])
+        else:
+            fup.append(lms[4][1] > lms[3][1])
+            
     # Qolgan 4 ta barmoq — tip.y < pip.y = yuqorida
     for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]:
         fup.append(lms[tip][2] < lms[pip][2])
@@ -442,7 +449,7 @@ def main():
         any_lms = nav if nav else cmd
         any_label = nav_label if nav else cmd_label
         if any_lms and not canvas.active:
-            fup_any = fingers_up(any_lms, any_label)
+            fup_any = fingers_up(any_lms, any_label, tracker)
             palm_open = all(fup_any)
             palm_x = any_lms[9][1]
 
@@ -466,7 +473,7 @@ def main():
         screen_mx, screen_my = None, None
         
         if canvas.active and nav:
-            fup = fingers_up(nav, nav_label)
+            fup = fingers_up(nav, nav_label, tracker)
             x1, y1 = nav[8][1], nav[8][2]
             
             # Chizish uchun kamera koordinatasini ekranga o'tkazish
@@ -594,7 +601,7 @@ def main():
             d420c = dm(tracker, lc, 4, 20)
             d812c = dm(tracker, lc, 8, 12)
 
-            fup_cmd = fingers_up(lc, cmd_label)
+            fup_cmd = fingers_up(lc, cmd_label, tracker)
 
             # Qo'l harakatlanayotsa — barcha komandalarni tozala
             if not hand_still:
@@ -700,12 +707,12 @@ def main():
                 
                 if not fired and app_idx > 0:
                     key = f'app_{app_idx}'
-                    if timer.check(key, True, 2.0):
+                    if timer.check(key, True, 2.5):
                         mouse.launch_by_finger_count(app_idx)
                         gesture = f"✅ 🚀 {APP_NAMES.get(app_idx)}"
                         last_cmd, fired = now, True
                     else:
-                        gesture = f"👆 {APP_NAMES.get(app_idx, '?')} {timer.pct(key, 2.0)}%"
+                        gesture = f"👆 {APP_NAMES.get(app_idx, '?')} {timer.pct(key, 2.5)}%"
                     
                     for i in range(1, 6):
                         if i != app_idx:
