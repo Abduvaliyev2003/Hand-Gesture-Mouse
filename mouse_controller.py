@@ -30,10 +30,16 @@ class MouseController:
         self.last_screenshot_time = 0
         self.last_url_time = 0
         self.last_volume_time = 0
+        self.last_workspace_time = 0
+        self.last_lock_time = 0
+        self.last_app_time = 0
         self.click_cooldown = 0.5
         self.screenshot_cooldown = 2.0
         self.url_cooldown = 3.0
         self.volume_cooldown = 0.15
+        self.workspace_cooldown = 1.5
+        self.lock_cooldown = 5.0
+        self.app_cooldown = 2.0
 
         # Continuous control state
         self.prev_y_scroll = None
@@ -216,3 +222,65 @@ class MouseController:
         self.prev_y_zoom = None
         if self.is_dragging:
             self.drag_stop()
+
+    # ─── WORKSPACE SWITCH ──────────────────────────────────────────────
+    def switch_workspace(self, direction):
+        """GNOME workspace almashtirish. direction: 'left' yoki 'right'"""
+        t = time.time()
+        if t - self.last_workspace_time > self.workspace_cooldown:
+            if direction == 'left':
+                with self.keyboard.pressed(Key.ctrl):
+                    with self.keyboard.pressed(Key.alt):
+                        self.keyboard.tap(Key.left)
+            else:
+                with self.keyboard.pressed(Key.ctrl):
+                    with self.keyboard.pressed(Key.alt):
+                        self.keyboard.tap(Key.right)
+            self.last_workspace_time = t
+            print(f"🖥️ Workspace: {direction}")
+            return True
+        return False
+
+    # ─── LOCK SCREEN ───────────────────────────────────────────────────
+    def lock_screen(self):
+        """Ekranni qulflash."""
+        t = time.time()
+        if t - self.last_lock_time > self.lock_cooldown:
+            subprocess.Popen(
+                ["loginctl", "lock-session"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            self.last_lock_time = t
+            print("🔒 Screen locked!")
+            return True
+        return False
+
+    # ─── APP LAUNCHER ──────────────────────────────────────────────────
+    def open_app(self, app_name):
+        """Ilovani ochadi."""
+        t = time.time()
+        if t - self.last_app_time > self.app_cooldown:
+            apps = {
+                'terminal':  ['gnome-terminal'],
+                'files':     ['nautilus'],
+                'browser':   ['xdg-open', 'https://google.com'],
+                'vscode':    ['code'],
+                'settings':  ['gnome-control-center'],
+                'telegram':  ['telegram-desktop'],
+            }
+            cmd = apps.get(app_name)
+            if cmd:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.last_app_time = t
+                print(f"🚀 Opened: {app_name}")
+                return True
+        return False
+
+    def launch_by_finger_count(self, count):
+        """Barmoq soniga qarab ilova ochadi: 1=Terminal 2=Files 3=Browser 4=VSCode 5=Settings"""
+        mapping = {1: 'terminal', 2: 'files', 3: 'browser', 4: 'vscode', 5: 'settings'}
+        app = mapping.get(count)
+        if app:
+            return self.open_app(app)
+        return False
+
